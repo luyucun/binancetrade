@@ -1,0 +1,12 @@
+{
+  "LINKUSDT": {
+    "cooldown_until": "2025-11-06T22:17:37.319687",
+    "failure_count": 1635,
+    "last_failure": "2025-11-06T10:17:37.319687"
+  },
+  "ETCUSDT": {
+    "cooldown_until": "2025-11-06T22:17:36.949908",
+    "failure_count": 3106,
+    "last_failure": "2025-11-06T10:17:36.949908"
+  }
+}
