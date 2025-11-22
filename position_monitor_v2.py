@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from dataclasses import dataclass
 
 from risk_manager_v2 import RiskManager, ActivePosition, PositionStatus
+from config_v2 import ROTATION_SYSTEM
 
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,11 @@ class PositionMonitor:
         self.risk_manager = risk_manager
         self.monitoring_events: List[MonitoringEvent] = []
         self.last_check_time: Dict[str, datetime] = {}
+
+        # 🔧 新增：冷却和重复控制追踪
+        self._performance_tracking = {}  # {symbol: {'wins': 0, 'losses': 0, 'recent_trades': []}}
+        self._dynamic_cooldowns = {}  # {symbol: cooldown_minutes}
+        self._last_cleanup_time = datetime.now()
 
     # ==================== 主要监控方法 ====================
     def monitor_all_positions(
@@ -76,6 +82,21 @@ class PositionMonitor:
             should_close, update_events = self.risk_manager.update_position(
                 symbol, current_price, atr
             )
+
+            # 早期止损缓冲：入场初期的小幅回撤不立刻止损，降低“对敲手续费”概率
+            if should_close:
+                try:
+                    if self.check_early_stop_loss_buffer(
+                        position,
+                        current_price,
+                        min_hold_minutes=8,
+                        early_stop_buffer_pct=0.003  # 0.3%
+                    ):
+                        should_close = False
+                        update_events.append("缓冲: 入场<8m且回撤<0.3%，暂不止损")
+                except Exception:
+                    # 忽略缓冲异常，维持原有 should_close 结果
+                    pass
 
             # 检查是否启用了追踪止损(stage3触发)
             stage3_triggered = any(e['stage'] == 3 for e in position.partial_exits)
@@ -387,6 +408,196 @@ class PositionMonitor:
             'total_floating_pnl': total_floating_pnl,
             'total_events': total_events,
             'last_event': self.monitoring_events[-1] if self.monitoring_events else None
+        }
+
+    # ==================== 增强冷却与重复控制 ====================
+    def update_performance_tracking(self, symbol: str, profit_loss: float):
+        """
+        更新币种表现追踪记录
+
+        Args:
+            symbol: 币种符号
+            profit_loss: 盈亏金额(USDT)
+        """
+        if symbol not in self._performance_tracking:
+            self._performance_tracking[symbol] = {
+                'wins': 0,
+                'losses': 0,
+                'recent_trades': [],
+                'total_pnl': 0.0,
+                'last_trade_time': None
+            }
+
+        perf = self._performance_tracking[symbol]
+
+        # 记录胜负
+        if profit_loss > 0:
+            perf['wins'] += 1
+        else:
+            perf['losses'] += 1
+
+        # 更新总盈亏和时间
+        perf['total_pnl'] += profit_loss
+        perf['last_trade_time'] = datetime.now()
+
+        # 记录最近交易（保持最近20笔）
+        perf['recent_trades'].append({
+            'timestamp': datetime.now(),
+            'pnl': profit_loss,
+            'result': 'win' if profit_loss > 0 else 'loss'
+        })
+
+        # 保持最近20笔记录
+        if len(perf['recent_trades']) > 20:
+            perf['recent_trades'] = perf['recent_trades'][-20:]
+
+        # 🔧 基于表现动态调整冷却期
+        self._update_dynamic_cooldown(symbol, perf)
+
+        logger.debug(f"{symbol}: 更新表现追踪 - 胜率: {perf['wins']}/{perf['wins']+perf['losses']}, 总盈亏: {perf['total_pnl']:+.2f} USDT")
+
+    def _update_dynamic_cooldown(self, symbol: str, performance: Dict):
+        """
+        基于表现动态调整冷却期
+
+        Args:
+            symbol: 币种符号
+            performance: 表现数据
+        """
+        base_cooldown = ROTATION_SYSTEM['cooldown_periods']['after_stop_loss']  # 90分钟
+        win_cooldown = ROTATION_SYSTEM['cooldown_periods']['after_take_profit']  # 10分钟
+
+        total_trades = performance['wins'] + performance['losses']
+        win_rate = performance['wins'] / total_trades if total_trades > 0 else 0.0
+
+        # 🔧 动态冷却策略
+        if total_trades >= 5:  # 至少有5笔交易记录
+            if win_rate >= 0.8:
+                # 胜率≥80%：缩短冷却期（奖励策略）
+                dynamic_cooldown = max(win_cooldown, base_cooldown * 0.5)  # 最短10分钟
+                logger.info(f"{symbol}: 高胜率({win_rate:.0%})，缩短冷却至{dynamic_cooldown}分钟")
+            elif win_rate <= 0.3:
+                # 胜率≤30%：延长冷却期（保护策略）
+                dynamic_cooldown = base_cooldown * 2  # 180分钟
+                logger.warning(f"{symbol}: 低胜率({win_rate:.0%})，延长冷却至{dynamic_cooldown}分钟")
+            else:
+                # 正常胜率：使用基础冷却期
+                dynamic_cooldown = base_cooldown
+        else:
+            # 交易记录不足：使用基础冷却期
+            dynamic_cooldown = base_cooldown
+
+        self._dynamic_cooldowns[symbol] = dynamic_cooldown
+
+    def get_dynamic_cooldown(self, symbol: str) -> int:
+        """
+        获取币种的动态冷却期
+
+        Args:
+            symbol: 币种符号
+
+        Returns:
+            动态冷却期(分钟)
+        """
+        return self._dynamic_cooldowns.get(symbol, ROTATION_SYSTEM['cooldown_periods']['after_stop_loss'])
+
+    def should_skip_symbol_due_to_performance(self, symbol: str) -> Tuple[bool, str]:
+        """
+        基于表现历史判断是否应跳过该币种
+
+        Args:
+            symbol: 币种符号
+
+        Returns:
+            (是否跳过, 跳过原因)
+        """
+        if symbol not in self._performance_tracking:
+            return False, ""
+
+        perf = self._performance_tracking[symbol]
+        total_trades = perf['wins'] + perf['losses']
+
+        # 🔧 表现过滤规则
+        if total_trades >= 10:  # 至少10笔交易
+            win_rate = perf['wins'] / total_trades
+
+            # 检查最近5笔连续亏损
+            recent_5 = perf['recent_trades'][-5:] if len(perf['recent_trades']) >= 5 else []
+            if len(recent_5) == 5 and all(trade['result'] == 'loss' for trade in recent_5):
+                return True, f"最近5笔连续亏损，暂时跳过"
+
+            # 检查整体胜率过低
+            if win_rate < 0.2:  # 胜率<20%
+                return True, f"历史胜率过低({win_rate:.0%})，暂时跳过"
+
+            # 检查近期累计亏损过大
+            recent_10_pnl = sum(trade['pnl'] for trade in perf['recent_trades'][-10:])
+            if recent_10_pnl < -50:  # 最近10笔累计亏损>50 USDT
+                return True, f"近期累计亏损过大({recent_10_pnl:+.1f} USDT)，暂时跳过"
+
+        return False, ""
+
+    def cleanup_old_performance_data(self):
+        """定期清理过期的表现数据"""
+        current_time = datetime.now()
+        cutoff_time = current_time - timedelta(days=30)  # 保留30天数据
+
+        # 清理频率：每小时一次
+        if current_time - self._last_cleanup_time < timedelta(hours=1):
+            return
+
+        symbols_to_clean = []
+        for symbol, perf in self._performance_tracking.items():
+            # 清理30天前的交易记录
+            perf['recent_trades'] = [
+                trade for trade in perf['recent_trades']
+                if trade['timestamp'] > cutoff_time
+            ]
+
+            # 如果币种长时间无交易且表现差，完全移除
+            if (perf['last_trade_time'] and
+                perf['last_trade_time'] < cutoff_time and
+                len(perf['recent_trades']) == 0):
+                symbols_to_clean.append(symbol)
+
+        # 移除过期数据
+        for symbol in symbols_to_clean:
+            del self._performance_tracking[symbol]
+            self._dynamic_cooldowns.pop(symbol, None)
+
+        self._last_cleanup_time = current_time
+
+        if symbols_to_clean:
+            logger.info(f"清理了{len(symbols_to_clean)}个币种的过期表现数据")
+
+    def get_performance_summary(self) -> Dict:
+        """获取整体表现摘要"""
+        total_symbols = len(self._performance_tracking)
+        if total_symbols == 0:
+            return {"total_symbols": 0}
+
+        total_wins = sum(perf['wins'] for perf in self._performance_tracking.values())
+        total_losses = sum(perf['losses'] for perf in self._performance_tracking.values())
+        total_pnl = sum(perf['total_pnl'] for perf in self._performance_tracking.values())
+
+        overall_win_rate = total_wins / (total_wins + total_losses) if (total_wins + total_losses) > 0 else 0
+
+        # 找出表现最好和最差的币种
+        best_symbol = max(self._performance_tracking.items(),
+                          key=lambda x: x[1]['total_pnl'], default=(None, None))
+        worst_symbol = min(self._performance_tracking.items(),
+                           key=lambda x: x[1]['total_pnl'], default=(None, None))
+
+        return {
+            "total_symbols": total_symbols,
+            "overall_win_rate": overall_win_rate,
+            "total_pnl": total_pnl,
+            "total_trades": total_wins + total_losses,
+            "best_performer": best_symbol[0] if best_symbol[0] else None,
+            "best_pnl": best_symbol[1]['total_pnl'] if best_symbol[1] else 0,
+            "worst_performer": worst_symbol[0] if worst_symbol[0] else None,
+            "worst_pnl": worst_symbol[1]['total_pnl'] if worst_symbol[1] else 0,
+            "symbols_with_extended_cooldown": len([s for s, c in self._dynamic_cooldowns.items() if c > 90])
         }
 
 

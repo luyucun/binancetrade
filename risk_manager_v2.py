@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from config_v2 import RISK_MANAGEMENT, ROTATION_SYSTEM
+from config_v2 import RISK_MANAGEMENT, ROTATION_SYSTEM, COST_CONFIG
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,9 @@ class ActivePosition:
     highest_price_since_entry: float = 0.0
     lowest_price_since_entry: float = 0.0
 
+    # 平仓时间（用于集体止损检测）
+    close_time: Optional[datetime] = None
+
     def __post_init__(self):
         if self.partial_exits is None:
             self.partial_exits = []
@@ -128,7 +131,7 @@ class RiskManager:
 
         # 根据评分采用分段倍率调整 (V2.0需求)
         if signal_score <= 7:
-            score_multiplier = 0.5  # 50%基础仓位
+            score_multiplier = 1.0  # 🔧 改为100%，避免仓位过小
         elif signal_score <= 10:
             score_multiplier = 1.0  # 100%标准仓位
         else:  # 11-12分
@@ -136,16 +139,25 @@ class RiskManager:
 
         position_size *= score_multiplier
 
-        # 根据信心度调整
-        position_size *= confidence
+        # 根据信心度调整 - 🔧 不直接乘以confidence，而是分级处理
+        # 信心度用来调整是否开仓，而不是缩减仓位，避免仓位过小
+        if confidence >= 0.7:
+            confidence_multiplier = 1.0
+        elif confidence >= 0.5:
+            confidence_multiplier = 0.9  # 🔧 降低处罚力度，避免过度缩仓
+        else:
+            confidence_multiplier = 0.8
+
+        position_size *= confidence_multiplier
 
         # 应用相关性惩罚
         position_size *= correlation_penalty
 
-        # 确保满足最小notional要求
-        if position_size < min_notional:
-            logger.warning(f"仓位大小 {position_size:.2f} USDT < 最小值 {min_notional} USDT，调整到最小值")
-            position_size = min_notional
+        # 确保满足最小notional要求 - 🔧 设置更合理的最小值
+        min_notional_safe = max(8.0, min_notional)  # 🔧 至少8 USDT，给滑点和费用留余地
+        if position_size < min_notional_safe:
+            logger.debug(f"仓位大小 {position_size:.2f} USDT < 最小安全值 {min_notional_safe} USDT，调整到最小值")
+            position_size = min_notional_safe
 
         # 检查仓位比例限制
         max_single_position = self.total_account_usdt * max_position_ratio
@@ -194,12 +206,24 @@ class RiskManager:
         else:
             initial_stop_loss = entry_price + (atr * initial_stop_multiplier)
 
-        # 确保止损在最小/最大范围内
+        # 🔧 高波动币种特殊处理：使用max(ATR*1.5, min_stop_pct)
         min_stop_pct = self.config['stop_loss']['min_stop_pct']
         max_stop_pct = self.config['stop_loss']['max_stop_pct']
+        high_vol_multiplier = self.config['stop_loss'].get('high_volatility_multiplier', 1.5)
 
-        actual_stop_distance = abs(entry_price - initial_stop_loss) / entry_price * 100
-        actual_stop_distance = max(min_stop_pct, min(actual_stop_distance, max_stop_pct))
+        # 计算当前ATR百分比
+        atr_pct = (atr / entry_price) * 100
+
+        # 如果ATR超过2%，认为是高波动币种，使用特殊规则
+        if atr_pct > 2.0:
+            # 对高波动币种：使用max(ATR*1.5, min_stop_pct)
+            high_vol_stop_pct = max(atr_pct * high_vol_multiplier, min_stop_pct)
+            actual_stop_distance = min(high_vol_stop_pct, max_stop_pct)
+            logger.debug(f"高波动币种止损: ATR={atr_pct:.2f}%, 使用{actual_stop_distance:.2f}%")
+        else:
+            # 普通币种：确保止损在最小/最大范围内
+            actual_stop_distance = abs(entry_price - initial_stop_loss) / entry_price * 100
+            actual_stop_distance = max(min_stop_pct, min(actual_stop_distance, max_stop_pct))
 
         if direction == 'BUY':
             initial_stop_loss = entry_price * (1 - actual_stop_distance / 100)
@@ -313,13 +337,21 @@ class RiskManager:
             position.highest_price_since_entry = max(position.highest_price_since_entry, current_price)
             position.lowest_price_since_entry = min(position.lowest_price_since_entry, current_price)
 
-        # 计算浮动P&L
+        # 计算浮动P&L（扣除手续费）
+        # 价差盈亏
         if position.side == 'BUY':
-            position.floating_pnl_usdt = (current_price - position.entry_price) * position.remaining_quantity
-            position.floating_pnl_pct = (current_price - position.entry_price) / position.entry_price
+            price_diff = (current_price - position.entry_price) * position.remaining_quantity
         else:
-            position.floating_pnl_usdt = (position.entry_price - current_price) * position.remaining_quantity
-            position.floating_pnl_pct = (position.entry_price - current_price) / position.entry_price
+            price_diff = (position.entry_price - current_price) * position.remaining_quantity
+
+        # 手续费（入场+预估出场）
+        entry_fee = position.entry_price * position.remaining_quantity * (COST_CONFIG['taker_fee_bps'] / 10000)
+        exit_fee = current_price * position.remaining_quantity * (COST_CONFIG['taker_fee_bps'] / 10000)
+        total_fee = entry_fee + exit_fee
+
+        # 净盈亏
+        position.floating_pnl_usdt = price_diff - total_fee
+        position.floating_pnl_pct = position.floating_pnl_usdt / position.entry_amount_usdt if position.entry_amount_usdt > 0 else 0
 
         # 检查保本触发 (0.5×ATR，优先级高于stage止盈)
         breakeven_trigger_atr = self.config['stop_loss'].get('breakeven_trigger', 0.5)

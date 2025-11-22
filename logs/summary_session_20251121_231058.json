@@ -1,0 +1,24 @@
+{
+  "session_id": "session_20251121_231058",
+  "start_time": "2025-11-21T23:10:58.662583",
+  "end_time": "2025-11-21T23:26:06.615694",
+  "total_trades": 3,
+  "winning_trades": 0,
+  "losing_trades": 3,
+  "total_pnl": -0.06208268697724077,
+  "win_rate": 0.0,
+  "profit_factor": 0.0,
+  "max_drawdown": 0.06208268697724077,
+  "sharpe_ratio": null,
+  "avg_trade_duration": 841.228826,
+  "top_performers": [
+    "OPUSDT",
+    "ATOMUSDT"
+  ],
+  "worst_performers": [
+    "OPUSDT",
+    "ATOMUSDT"
+  ],
+  "errors_count": 15,
+  "network_issues_count": 0
+}

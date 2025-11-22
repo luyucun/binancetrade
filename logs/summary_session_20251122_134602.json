@@ -1,0 +1,26 @@
+{
+  "session_id": "session_20251122_134602",
+  "start_time": "2025-11-22T13:46:02.632268",
+  "end_time": "2025-11-22T22:04:50.030172",
+  "total_trades": 112,
+  "winning_trades": 34,
+  "losing_trades": 78,
+  "total_pnl": -2.8475530245594776,
+  "win_rate": 0.30357142857142855,
+  "profit_factor": 0.39613030759465934,
+  "max_drawdown": 2.8475530245594776,
+  "sharpe_ratio": null,
+  "avg_trade_duration": 1254.9202419017856,
+  "top_performers": [
+    "LAYERUSDT",
+    "GPSUSDT",
+    "ENSOUSDT"
+  ],
+  "worst_performers": [
+    "2ZUSDT",
+    "KITEUSDT",
+    "PARTIUSDT"
+  ],
+  "errors_count": 5510,
+  "network_issues_count": 0
+}

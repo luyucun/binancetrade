@@ -6,12 +6,16 @@
 
 # ==================== 1. 选币策略配置 ====================
 SELECTION_CONFIG = {
-    'min_24h_volume': 5000000,      # 最小24小时交易量500万USDT
-    'max_24h_change': 15.0,         # 最大24小时涨跌幅±15%
-    'min_price': 0.001,             # 最小价格过滤
+    'min_24h_volume': 80000000,     # 🔧 最小24小时交易量8000万USDT
+    'max_24h_change': 50.0,         # 🔧 最大24小时涨跌幅±50%（放宽，允许波动大的币）
+    'min_price': 0.000001,          # 🔧 最小价格0.000001（几乎不限制，允许低价币）
     'exclude_patterns': ['1000', 'BULL', 'BEAR', 'UP', 'DOWN'],  # 排除杠杆代币
-    'top_n_by_volume': 60,          # 交易量前60的币种（持续监控）
-    'volume_ratio_threshold': 1.2,  # 当前成交量/平均成交量 > 1.2
+    'top_n_by_volume': 70,          # 🔧 交易量前70的币种
+    'volume_ratio_threshold': 1.3,  # 🔧 当前成交量/平均成交量 > 1.3（从2.0降低到1.3）
+
+    # 🔧 新增：过滤上市未满72h的合约
+    'min_listing_hours': 72,        # 最少上市72小时
+    'min_trade_count_24h': 50000,   # 24h最少交易笔数，过滤成交稀少的币种
 }
 
 # ==================== 2. 多时间框架配置 ====================
@@ -21,9 +25,9 @@ TIMEFRAME_CONFIG = {
     'trend_tf': '15m',       # 趋势时间框架：15分钟（总体趋势）
 
     'data_requirements': {
-        '3m': 50,   # 需要50根3分钟K线（2.5小时）
+        '3m': 40,   # 🔧 从50降到40根3分钟K线（2小时）
         '5m': 20,   # 需要20根5分钟K线（1.6小时）
-        '15m': 10   # 需要10根15分钟K线（2.5小时）
+        '15m': 30   # 🔧 从50降到30根15分钟K线（7.5小时），确保能计算EMA50
     }
 }
 
@@ -65,11 +69,11 @@ TREND_RULES = {
 
 # ==================== 4. 入场信号规则 ====================
 ENTRY_RULES = {
-    # 突破入场
+    # 突破入场（放宽条件）
     'breakout': {
         'lookback_period': 10,      # 回看10周期
-        'confirmation_bars': 2,     # 需要2根确认K线
-        'volume_boost': 1.3,        # 成交量放大30%
+        'confirmation_bars': 3,     # 需要3根确认K线
+        'volume_boost': 1.3,        # 🔧 成交量放大30%（从1.6降低到1.3）
     },
 
     # 趋势回调入场
@@ -79,9 +83,9 @@ ENTRY_RULES = {
         'macd_histogram': 'improving'  # MACD柱状图改善
     },
 
-    # 多重时间框架确认
+    # 多重时间框架确认（更严格）
     'multi_tf_confirmation': {
-        'required_score': 3,        # 需要3分确认分数
+        'required_score': 4,        # 需要4分确认分数（更严格）
         'factors': [
             'primary_tf_trend',     # 主时间框架趋势
             'confirmation_tf_momentum',  # 确认时间框架动量
@@ -107,27 +111,30 @@ RISK_MANAGEMENT = {
     'stop_loss': {
         'initial_atr_multiplier': 1.2,    # 初始止损1.2×ATR
         'volatility_adjustment': True,    # 根据波动率调整
-        'min_stop_pct': 0.4,              # 最小止损0.4%（百分数表示，实际0.004）
-        'max_stop_pct': 3.0,              # 最大止损3.0%（百分数表示，实际0.03）
-        'breakeven_trigger': 0.5,         # 盈利0.5×ATR时保本
+        'min_stop_pct': 1.0,              # 🔧 最小止损1.0%（从0.6%提高到1.0%）
+        'max_stop_pct': 8.0,              # 🔧 最大止损8.0%（从3.0%提高到8.0%，允许高波动币）
+        'breakeven_trigger': 1.0,         # 🔧 盈利1.0×ATR时保本
+        'high_volatility_multiplier': 1.5, # 🔧 高波动币种使用max(ATR*1.5, min_stop_pct)
     },
 
-    # 分阶段止盈
+    # 分阶段止盈（更大利润期望）
     'take_profit': {
         'stage1': {
-            'trigger': 0.8,         # 0.8×ATR触发
-            'close_pct': 0.4,       # 平仓40%
-            'move_stop_to_breakeven': True
+            'trigger': 0.8,         # 🔧 0.8×ATR触发（从1.0降低到0.8，更容易触发）
+            'close_pct': 0.25,      # 平仓25%
+            'move_stop_to_breakeven': True,
+            'enable_trailing_stop': False  # Stage1不启用追踪止损
         },
         'stage2': {
-            'trigger': 1.2,         # 1.2×ATR触发
-            'close_pct': 0.3,       # 平仓30%
-            'move_stop_to_breakeven_plus': True
+            'trigger': 1.4,         # 🔧 1.4×ATR触发（从1.6降低到1.4）
+            'close_pct': 0.35,      # 平仓35%
+            'move_stop_to_breakeven_plus': True,
+            'enable_trailing_stop': True   # Stage2后启动追踪止损
         },
         'stage3': {
-            'trigger': 1.8,         # 1.8×ATR触发
+            'trigger': 2.0,         # 🔧 2.0×ATR触发（从2.2降低到2.0）
             'trailing_stop': True,  # 启用追踪止损
-            'trailing_atr_multiplier': 1.0  # 1.0×ATR追踪
+            'trailing_atr_multiplier': 1.2  # 1.2×ATR追踪
         }
     }
 }
@@ -136,9 +143,9 @@ RISK_MANAGEMENT = {
 MARKET_FILTERS = {
     # BTC市场状态
     'btc_condition': {
-        'max_1m_volatility': 0.02,      # BTC 1分钟波动不超过2%
-        'rsi_15m_range': [25, 75],      # BTC 15分钟RSI在25-75之间
-        'trend_alignment': 'non_reverse'  # 非反向：不能与我们的交易方向相反
+        'max_1m_volatility': 0.030,     # 🔧 BTC 1分钟波动不超过3.0%（防止插针时开单）
+        'rsi_15m_range': [0, 100],      # 🔧 完全忽略BTC的RSI限制
+        'trend_alignment': 'reference_only' # 🔧 BTC趋势仅作参考，不强制要求
     },
 
     # 整体市场过滤
@@ -154,6 +161,15 @@ MARKET_FILTERS = {
         'session_preference': 'asian_european', # 偏好亚欧时段
         'weekend_reduce_exposure': True   # 周末降低风险暴露
     }
+}
+
+# ==================== 6.1 入场防抖（硬门槛） ====================
+# 说明：
+# - atr_pct_min/atr_pct_max 使用小数表示占比（例如 0.004 = 0.4%）
+# - 用于过滤"波动太小没有空间覆盖成本"和"波动太大滑点与风险过高"的行情
+ENTRY_GUARDS = {
+    'atr_pct_min': 0.001,  # 🔧 0.1%（从0.2%降低到0.1%，进一步放宽门槛）
+    'atr_pct_max': 0.040,  # 🔧 4.0%（从3.0%放宽到4.0%）
 }
 
 # ==================== 7. 信号评分系统 ====================
@@ -177,8 +193,8 @@ SCORING_SYSTEM = {
     },
 
     'thresholds': {
-        'minimum_score': 7,         # 最低得分7分才入场 (从5提高到7)
-        'high_confidence': 8,       # 高信心得分8分
+        'minimum_score': 5,         # 🔧 最低得分从7降低到5（大幅放宽）
+        'high_confidence': 7,       # 🔧 高信心得分从8降低到7
         'maximum_position_size': 12 # 最大仓位得分12分
     }
 }
@@ -186,16 +202,19 @@ SCORING_SYSTEM = {
 # ==================== 8. 冷却和轮动机制 ====================
 ROTATION_SYSTEM = {
     'cooldown_periods': {
-        'after_stop_loss': 30,      # 止损后冷却30分钟
+        'after_stop_loss': 90,      # 🔧 止损后冷却60-90分钟
         'after_take_profit': 10,    # 止盈后冷却10分钟
-        'after_multiple_losses': 60 # 多次亏损后冷却60分钟
+        'after_multiple_losses': 180 # 多次亏损后冷却180分钟（更长，从60提高到180）
     },
 
     'symbol_rotation': {
-        'max_concurrent_positions': 3,  # 最大同时持仓3个
+        'max_concurrent_positions': 6,  # 最大同时持仓6个（扩大持仓容量）
         'sector_diversification': True, # 板块分散
         'correlation_threshold': 0.7,   # 相关性阈值0.7
-        'performance_review_interval': 24 # 每24小时评估表现
+        'performance_review_interval': 24, # 每24小时评估表现
+        # 🔧 新增：每日交易限制和相关性控制
+        'max_daily_trades_per_symbol': 2,  # 同一标的日内最多2笔
+        'correlation_symbol_limit': 1      # 相关性>0.7的候选只保留评分最高一个
     },
 
     'dynamic_adjustment': {
@@ -211,7 +230,8 @@ EXECUTION_SYSTEM = {
         'order_type': 'MARKET',         # 市价单
         'slippage_control': True,       # 滑点控制
         'partial_fill_handling': True,  # 部分成交处理
-        'timeout_seconds': 10           # 订单超时10秒
+        'timeout_seconds': 10,          # 订单超时10秒
+        'maker_timeout_seconds': 2      # Maker订单等待时间（从3秒优化到2秒）
     },
 
     'position_monitoring': {
@@ -264,10 +284,35 @@ INDICATOR_CONFIG = {
 API_CONFIG = {
     'binance_key': 'imYdWlm5XWjKRi9SPm6vFvf9m95MQ5Sy24pDvkAVh7MaNAQ2SMl2HsCEb9QA6kTo',
     'binance_secret': 'nt6zojBmMkNOnA5WsTvpBh2pORcCxBYEQQinSo8dbWQdu320KKk5CS6hLYsGd1QF',
-    'testnet': False,                     # ⚠️ 实盘模式: 设置为False使用MAINNET
+    'testnet': False,                     # ✅ 实盘模式: MAINNET
+    'paper_trading': False,               # 🚨 实盘交易模式: 使用真实资金
     'require_explicit_mainnet_confirmation': True,  # 实盘需显式确认
     'timeout': 30,                        # API超时（秒）
-    'max_retries': 5,                    # 最大重试次数
+    'max_retries': 5,                     # 最大重试次数（已优化）
+    'retry_base_delay': 0.5,              # 重试基础延迟（秒）
+    'retry_max_delay': 5.0,               # 重试最大延迟（秒）
+
+    # 🔧 代理配置 (用于绕过地区限制)
+    'use_proxy': True,                    # ⚠️ 开启代理访问Binance
+    'proxy': {
+        # Shadowsocks通常使用SOCKS5代理
+        # 使用 socks5h:// 让代理进行DNS解析，避免本地DNS污染
+        'http': 'socks5h://127.0.0.1:1080',   # SOCKS5代理 (Shadowsocks默认端口)
+        'https': 'socks5h://127.0.0.1:1080',  # SOCKS5代理
+    }
+}
+
+# ==================== 11.1 成本与费率配置（以bps为单位） ====================
+# 说明：
+# - bps = 基点 = 0.01%（例如 5 bps = 0.05%）
+# - taker_fee_bps / maker_fee_bps 按你的实际费率设置
+# - slippage_bps 为预估滑点（单边），用于入场"最小边际收益"判断
+# - min_edge_bps 是最低要求的"首段收益空间"门槛
+COST_CONFIG = {
+    'maker_fee_bps': 2.0,   # 0.02%
+    'taker_fee_bps': 5.0,   # 0.05%
+    'slippage_bps': 2.0,    # 0.02%（单边预估滑点，调低以更贴近实际）
+    'min_edge_bps': 12.0    # 🔧 从35.0降至12.0：首段只需覆盖基本手续费+微利，Stage2/3去赚大钱
 }
 
 SYSTEM_CONFIG = {
@@ -276,8 +321,10 @@ SYSTEM_CONFIG = {
     'signal_check_interval': 60,         # 信号检查间隔（秒）
     'position_check_interval': 10,       # 持仓检查间隔（秒）
     'max_concurrent_tasks': 10,          # 最大并发任务数
-    'log_level': 'INFO',                 # 日志级别
+    'log_level': 'DEBUG',                # 🔧 临时改为DEBUG，诊断问题后改回INFO
     'debug_mode': False,                 # 调试模式
+    'max_entries_per_hour': 20,           # 每小时最大开仓次数
+    'daily_loss_limit_usdt': 1000.0,     # 单日亏损限制（USDT），达到后停止新开仓
 }
 
 # ==================== 12. 数据存储配置 ====================

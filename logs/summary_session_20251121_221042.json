@@ -1,0 +1,18 @@
+{
+  "session_id": "session_20251121_221042",
+  "start_time": "2025-11-21T22:10:42.081732",
+  "end_time": "2025-11-21T22:21:00.974933",
+  "total_trades": 0,
+  "winning_trades": 0,
+  "losing_trades": 0,
+  "total_pnl": 0.0,
+  "win_rate": 0,
+  "profit_factor": Infinity,
+  "max_drawdown": 0,
+  "sharpe_ratio": null,
+  "avg_trade_duration": 0,
+  "top_performers": [],
+  "worst_performers": [],
+  "errors_count": 0,
+  "network_issues_count": 0
+}

@@ -100,7 +100,12 @@ class MarketFilter:
         # 确定BTC的趋势
         btc_trend = "BULLISH" if btc_indicators_15m.ema_21 > btc_indicators_15m.ema_50 else "BEARISH"
 
-        if trend_alignment_mode == "strict":
+        # 🔧 如果目标方向是 BOTH（双向交易），直接视为参考模式
+        if target_direction == "BOTH":
+            reasons.append(f"○ BTC趋势({btc_trend})作为参考，允许双向交易")
+            conditions_met += 1
+
+        elif trend_alignment_mode == "strict":
             # 严格模式：BTC必须与我们的方向一致
             if (target_direction == "LONG" and btc_trend == "BULLISH") or \
                (target_direction == "SHORT" and btc_trend == "BEARISH"):

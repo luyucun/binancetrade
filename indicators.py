@@ -432,7 +432,10 @@ class IndicatorCalculator:
             )
 
         except Exception as e:
-            print(f"Error calculating indicators: {e}")
+            # 🔧 使用logging而不是print
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"计算指标时出错 (数据点数: {len(closes)}): {e}")
             return None
 
 

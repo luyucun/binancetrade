@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 启动交易系统脚本
 
@@ -13,19 +14,26 @@
 
 import asyncio
 import sys
+import os
 import logging
 from trading_engine_v2 import TradingEngine, EngineConfig
+
+# 修复Windows终端Unicode编码问题
+if sys.platform == 'win32':
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    os.system('chcp 65001 >nul 2>&1')
 
 
 def main():
     """主函数"""
 
-    # 解析命令行参数
-    mode = sys.argv[1] if len(sys.argv) > 1 else "paper"
+    # 解析命令行参数 - 默认实盘模式
+    mode = sys.argv[1] if len(sys.argv) > 1 else "real"
 
-    # 配置日志
+    # 配置日志 - 🔧 临时启用DEBUG
     logging.basicConfig(
-        level=logging.DEBUG if mode == "debug" else logging.INFO,
+        level=logging.DEBUG,  # 改为DEBUG看详细日志
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
             logging.StreamHandler(),
@@ -45,9 +53,9 @@ def main():
     # 创建引擎配置
     if mode == "real":
         # 实盘交易模式
-        print("⚠️  警告: 将在实盘交易模式下运行！")
-        print("⚠️  这将使用真实资金进行交易！")
-        print("⚠️  请确保你已经充分理解风险！")
+        print("[警告] 将在实盘交易模式下运行！")
+        print("[警告] 这将使用真实资金进行交易！")
+        print("[警告] 请确保你已经充分理解风险！")
 
         confirmation = input("请输入 'YES' 确认启动实盘交易: ")
         if confirmation != "YES":
@@ -57,7 +65,7 @@ def main():
         config = EngineConfig(
             debug_mode=False,
             paper_trading=False,
-            log_level="INFO"
+            log_level="DEBUG"  # 🔧 临时改为DEBUG诊断，稳定后改回INFO
         )
         logger.warning("=" * 80)
         logger.warning("实盘交易模式已启动！")
@@ -89,13 +97,60 @@ def main():
 
     # 运行主循环
     try:
-        asyncio.run(engine.main_loop(interval_seconds=10))
+        # 🔧 Windows平台需要特殊处理Ctrl+C
+        if sys.platform == 'win32':
+            # Windows: 使用ProactorEventLoop并手动处理信号
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            def signal_handler():
+                """处理Ctrl+C信号"""
+                logger.info("\n收到中断信号(Ctrl+C)，正在安全关闭...")
+                engine.stop()
+                loop.stop()
+
+            # 注册Ctrl+C处理器
+            try:
+                import signal
+                signal.signal(signal.SIGINT, lambda s, f: signal_handler())
+
+                # 运行主循环
+                loop.run_until_complete(engine.main_loop(interval_seconds=10))
+            except KeyboardInterrupt:
+                logger.info("\n收到中断信号，正在关闭...")
+                engine.stop()
+            finally:
+                loop.close()
+        else:
+            # Linux/Mac: 直接使用asyncio.run
+            asyncio.run(engine.main_loop(interval_seconds=10))
+
     except KeyboardInterrupt:
-        logger.info("收到中断信号，正在关闭...")
+        logger.info("\n收到中断信号，正在关闭...")
         engine.stop()
     except Exception as e:
         logger.error(f"系统错误: {e}", exc_info=True)
         engine.stop()
+    finally:
+        # 🔧 确保显示退出信息
+        print("\n" + "="*80)
+        print("交易引擎已安全停止")
+        print("="*80)
+
+        # 显示会话统计
+        try:
+            print(f"本次会话统计:")
+            print(f"  • 信号生成: {engine.stats.get('total_signals_generated', 0)} 个")
+            print(f"  • 信号执行: {engine.stats.get('signals_executed', 0)} 个")
+            print(f"  • 活跃持仓: {len(engine.risk_manager.active_positions)} 个")
+        except:
+            pass
+
+        print("\n按任意键退出...")
+        try:
+            input()
+        except:
+            pass
 
 
 if __name__ == "__main__":

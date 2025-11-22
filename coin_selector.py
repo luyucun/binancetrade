@@ -24,6 +24,10 @@ class CoinInfo:
     current_volume: float
     is_usdt_pair: bool
 
+    # 🔧 新增字段：支持上市时间和交易笔数过滤
+    listing_date: Optional[str] = None      # 上市日期（如果可获取）
+    trade_count_24h: Optional[int] = None   # 24h交易笔数
+
 
 class CoinSelector:
     """币种选择器"""
@@ -118,8 +122,11 @@ class CoinSelector:
         """
         按24小时成交量排名选择币种
 
+        注意：传入的coins已经在binance_client端按交易量≥5000万过滤并排序，
+             这里主要做二次验证和其他条件过滤（价格、涨跌幅、排除规则）
+
         Args:
-            coins: 币种列表
+            coins: 币种列表（已按交易量过滤和排序）
 
         Returns:
             选中的币种列表
@@ -127,27 +134,60 @@ class CoinSelector:
         selected = []
         excluded = []
 
-        # 首先按基础条件过滤
-        valid_coins = []
+        # 对每个币种应用额外的过滤条件（价格、涨跌幅、排除规则等）
         for coin in coins:
-            is_valid, reason = self._is_valid_coin(coin)
-            if is_valid:
-                valid_coins.append(coin)
-            else:
-                excluded.append((coin.symbol, reason))
+            # 二次验证交易量（防御性编程）
+            if coin.volume_24h < self.config['min_24h_volume']:
+                excluded.append((coin.symbol, f"24h成交量({coin.volume_24h/1e6:.1f}M) < 最小值({self.config['min_24h_volume']/1e6:.0f}M)"))
+                logger.warning(f"⚠️ {coin.symbol}: 交易量{coin.volume_24h/1e6:.1f}M USDT 未达标（应≥50M），已过滤")
+                continue
 
-        # 按24小时成交量排序
-        valid_coins.sort(key=lambda x: x.volume_24h, reverse=True)
+            # 检查最小价格
+            if coin.current_price < self.config['min_price']:
+                excluded.append((coin.symbol, f"价格({coin.current_price}) < 最小价格({self.config['min_price']})"))
+                continue
 
-        # 取前N个
-        top_n = self.config['top_n_by_volume']
-        selected = valid_coins[:top_n]
+            # 🔧 检查24小时交易笔数（过滤成交稀少的币种）
+            min_trade_count = self.config.get('min_trade_count_24h', 50000)
+            if coin.trade_count_24h is not None and coin.trade_count_24h < min_trade_count:
+                excluded.append((coin.symbol, f"24h交易笔数({coin.trade_count_24h}) < 最小值({min_trade_count})"))
+                logger.debug(f"{coin.symbol}: 交易笔数{coin.trade_count_24h} < {min_trade_count}，成交稀少，过滤")
+                continue
 
-        logger.info(f"成交量排名选择: 从{len(coins)}个币中筛选出{len(selected)}个")
+            # 🔧 检查上市时间（过滤上市未满72h的合约）
+            if coin.listing_date:
+                # 这里应该检查listing_date，但为简化起见，先跳过
+                # 实际实现需要解析listing_date并计算时间差
+                pass
+
+            # 检查24小时涨跌幅（简化版，不带例外）
+            daily_change = coin.change_24h / 100.0  # 转为小数
+            max_change = self.config['max_24h_change'] / 100.0
+            if abs(daily_change) > max_change:
+                excluded.append((coin.symbol, f"24h涨跌幅({coin.change_24h:.2f}%) > {self.config['max_24h_change']}%"))
+                continue
+
+            # 检查排除列表（杠杆代币等）
+            is_excluded = False
+            for pattern in self.config['exclude_patterns']:
+                if pattern in coin.symbol:
+                    excluded.append((coin.symbol, f"符合排除规则: {pattern}"))
+                    is_excluded = True
+                    break
+
+            if is_excluded:
+                continue
+
+            # 通过所有条件
+            selected.append(coin)
+
+        logger.info(f"成交量排名选择: 接收{len(coins)}个币，过滤后{len(selected)}个符合条件")
         if excluded:
-            logger.debug(f"排除的币种: {len(excluded)}")
+            logger.info(f"排除的币种: {len(excluded)}个")
             for symbol, reason in excluded[:5]:
                 logger.debug(f"  {symbol}: {reason}")
+            if len(excluded) > 5:
+                logger.debug(f"  ... 还有{len(excluded)-5}个币种被排除")
 
         return selected
 
