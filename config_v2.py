@@ -212,8 +212,8 @@ ROTATION_SYSTEM = {
         'sector_diversification': True, # 板块分散
         'correlation_threshold': 0.7,   # 相关性阈值0.7
         'performance_review_interval': 24, # 每24小时评估表现
-        # 🔧 新增：每日交易限制和相关性控制
-        'max_daily_trades_per_symbol': 2,  # 同一标的日内最多2笔
+        # 🔧 新增：相关性控制（移除日交易限制）
+        'max_daily_trades_per_symbol': 999,  # 🔧 移除日交易限制（设置为999）
         'correlation_symbol_limit': 1      # 相关性>0.7的候选只保留评分最高一个
     },
 
