@@ -53,14 +53,11 @@ def main():
     # 创建引擎配置
     if mode == "real":
         # 实盘交易模式
+        # 🔧 移除第一次确认，由 TradingEngine.start() 统一处理
         print("[警告] 将在实盘交易模式下运行！")
         print("[警告] 这将使用真实资金进行交易！")
         print("[警告] 请确保你已经充分理解风险！")
-
-        confirmation = input("请输入 'YES' 确认启动实盘交易: ")
-        if confirmation != "YES":
-            print("已取消实盘交易启动")
-            return
+        print()
 
         config = EngineConfig(
             debug_mode=False,
@@ -68,7 +65,7 @@ def main():
             log_level="DEBUG"  # 🔧 临时改为DEBUG诊断，稳定后改回INFO
         )
         logger.warning("=" * 80)
-        logger.warning("实盘交易模式已启动！")
+        logger.warning("即将启动实盘交易模式")
         logger.warning("=" * 80)
 
     elif mode == "debug":

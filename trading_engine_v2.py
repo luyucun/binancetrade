@@ -147,17 +147,46 @@ class TradingEngine:
         logger.info("交易引擎初始化完成")
 
     def _setup_logging(self):
-        """设置日志 - 精简版：只记录交易相关的重要事件"""
+        """设置日志 - 控制台显示全部，文件只记录交易相关"""
         # 检查是否已有handlers，避免重复配置
         if not logging.root.handlers:
-            # 如果没有配置，则设置包含文件输出的日志
+            # 创建控制台处理器（显示所有日志）
+            console_handler = logging.StreamHandler()
+            console_handler.setLevel(getattr(logging, self.config.log_level))
+            console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            console_handler.setFormatter(console_formatter)
+
+            # 🔧 创建文件处理器（只记录交易相关日志）
+            file_handler = logging.FileHandler('trading_engine.log', encoding='utf-8')
+            file_handler.setLevel(logging.INFO)
+            file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(file_formatter)
+
+            # 🔧 创建自定义过滤器，只允许交易相关日志写入文件
+            class TradingOnlyFilter(logging.Filter):
+                def filter(self, record):
+                    # WARNING和ERROR级别的日志总是记录
+                    if record.levelno >= logging.WARNING:
+                        return True
+
+                    # 只记录包含以下关键词的INFO级别日志
+                    trading_keywords = [
+                        '入场', '出场', '平仓', '开仓', '止损', '止盈',
+                        '✓ 入场成功', '✓ 出场成功', '执行入场', '执行出场',
+                        '触发止损', 'Stage', '部分平仓',
+                        '杠杆设置', '双向持仓模式', '引擎启动', '引擎停止',
+                        '交易引擎', '实盘交易确认', '紧急平仓'
+                    ]
+                    message = record.getMessage()
+                    return any(keyword in message for keyword in trading_keywords)
+
+            # 为文件处理器添加过滤器
+            file_handler.addFilter(TradingOnlyFilter())
+
+            # 设置根日志记录器
             logging.basicConfig(
                 level=getattr(logging, self.config.log_level),
-                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                handlers=[
-                    logging.StreamHandler(),
-                    logging.FileHandler('trading_engine.log', encoding='utf-8')
-                ]
+                handlers=[console_handler, file_handler]
             )
 
         # 🔧 根据配置的日志级别决定是否精简日志
