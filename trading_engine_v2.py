@@ -647,11 +647,13 @@ class TradingEngine:
 
                 logger.warning(f"[实盘交易] 执行出场订单: {symbol} {side} x {close_quantity:.6f} (positionSide: {position_side})")
 
+                # 注意：在双向持仓模式下，positionSide参数已经隐含了平仓意图
+                # 不需要也不能再使用reduce_only参数，否则会导致 -2022 错误
                 order = self.binance_client.place_market_order(
                     symbol=symbol,
                     side=side,
                     quantity=close_quantity,  # 使用原始数量
-                    reduce_only=True,
+                    reduce_only=False,  # 双向持仓模式下必须为False
                     position_side=position_side
                 )
 
