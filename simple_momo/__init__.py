@@ -1,0 +1,3 @@
+"""
+Simple momentum trading package.
+"""

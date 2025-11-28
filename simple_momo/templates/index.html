@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SimpleMomo 交易监控</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-card: #21262d;
+            --border-color: #30363d;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-blue: #58a6ff;
+            --accent-yellow: #d29922;
+            --accent-purple: #a371f7;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* 顶部标题栏 */
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            background: var(--bg-secondary);
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 20px;
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .status-badge.running {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+        }
+
+        .status-badge.paused {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--accent-red);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .status-badge.running .status-dot {
+            background: var(--accent-green);
+        }
+
+        .status-badge.paused .status-dot {
+            background: var(--accent-red);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .balance-display {
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--accent-green);
+        }
+
+        /* 控制按钮 */
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: var(--accent-blue);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #4393e6;
+        }
+
+        .btn-danger {
+            background: var(--accent-red);
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #da443b;
+        }
+
+        .btn-success {
+            background: var(--accent-green);
+            color: white;
+        }
+
+        /* 主内容区 */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* 统计卡片 */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .stat-value.positive {
+            color: var(--accent-green);
+        }
+
+        .stat-value.negative {
+            color: var(--accent-red);
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        /* 持仓卡片 */
+        .positions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .position-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 16px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .position-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+
+        .position-card.long {
+            border-left: 3px solid var(--accent-green);
+        }
+
+        .position-card.short {
+            border-left: 3px solid var(--accent-red);
+        }
+
+        .position-symbol {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .position-side {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 12px;
+        }
+
+        .position-side.long {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+        }
+
+        .position-side.short {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--accent-red);
+        }
+
+        .position-info {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .position-pnl {
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+
+        .no-positions {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        /* 日志区域 */
+        .log-container {
+            height: 400px;
+            overflow-y: auto;
+            background: var(--bg-card);
+            border-radius: 8px;
+            padding: 12px;
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .log-entry {
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            gap: 12px;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .log-level {
+            flex-shrink: 0;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .log-level.INFO {
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent-blue);
+        }
+
+        .log-level.WARNING {
+            background: rgba(210, 153, 34, 0.15);
+            color: var(--accent-yellow);
+        }
+
+        .log-level.ERROR {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--accent-red);
+        }
+
+        .log-level.SIGNAL {
+            background: rgba(163, 113, 247, 0.15);
+            color: var(--accent-purple);
+        }
+
+        .log-message {
+            word-break: break-all;
+        }
+
+        /* 冷却显示 */
+        .cooldown-section {
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .cooldown-title {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+        }
+
+        .cooldown-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .cooldown-chip {
+            padding: 4px 10px;
+            background: rgba(210, 153, 34, 0.15);
+            color: var(--accent-yellow);
+            border-radius: 12px;
+            font-size: 12px;
+        }
+
+        .global-cooldown {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--accent-red);
+            border-radius: 6px;
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        /* 连接状态 */
+        .connection-status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .connection-status.connected {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+        }
+
+        .connection-status.disconnected {
+            background: rgba(248, 81, 73, 0.15);
+            color: var(--accent-red);
+        }
+
+        /* 滚动条样式 */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-card);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-secondary);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 顶部栏 -->
+        <header class="header">
+            <div class="header-left">
+                <div class="logo">SimpleMomo</div>
+                <div id="statusBadge" class="status-badge paused">
+                    <span class="status-dot"></span>
+                    <span id="statusText">已暂停</span>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="balance-display">
+                    <span id="balance">0.00</span> USDT
+                </div>
+                <button id="toggleBtn" class="btn btn-success" onclick="toggleStrategy()">启动策略</button>
+            </div>
+        </header>
+
+        <!-- 统计卡片 -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div id="positionCount" class="stat-value">0/5</div>
+                <div class="stat-label">当前持仓</div>
+            </div>
+            <div class="stat-card">
+                <div id="todayTrades" class="stat-value">0</div>
+                <div class="stat-label">今日交易</div>
+            </div>
+            <div class="stat-card">
+                <div id="winRate" class="stat-value">0%</div>
+                <div class="stat-label">胜率</div>
+            </div>
+            <div class="stat-card">
+                <div id="todayPnl" class="stat-value positive">+0.00</div>
+                <div class="stat-label">今日盈亏</div>
+            </div>
+        </div>
+
+        <!-- 主内容区 -->
+        <div class="main-grid">
+            <!-- 持仓面板 -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span>📊</span> 持仓概览
+                    </div>
+                </div>
+
+                <div id="globalCooldown" class="global-cooldown" style="display: none;">
+                    <span>⏳</span>
+                    <span>全局冷却: <span id="cooldownTime">0</span>秒</span>
+                </div>
+
+                <div id="positionsGrid" class="positions-grid">
+                    <div class="no-positions">暂无持仓</div>
+                </div>
+
+                <div class="cooldown-section">
+                    <div class="cooldown-title">冷却中的币种:</div>
+                    <div id="cooldownChips" class="cooldown-chips">
+                        <span style="color: var(--text-secondary);">无</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 日志面板 -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <span>📝</span> 实时日志
+                    </div>
+                    <button class="btn btn-primary" onclick="clearLogs()">清空</button>
+                </div>
+                <div id="logContainer" class="log-container">
+                    <div class="log-entry">
+                        <span class="log-time">--:--:--</span>
+                        <span class="log-level INFO">INFO</span>
+                        <span class="log-message">等待连接...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 连接状态 -->
+    <div id="connectionStatus" class="connection-status disconnected">
+        <span class="status-dot"></span>
+        <span id="connectionText">未连接</span>
+    </div>
+
+    <script>
+        let isRunning = false;
+        let pollInterval = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 10;
+
+        // 使用轮询方式获取数据（比WebSocket更稳定）
+        function startPolling() {
+            addLocalLog('INFO', '已连接，开始轮询数据...');
+
+            // 立即拉取一次数据
+            fetchState();
+
+            // 每1秒拉取一次
+            pollInterval = setInterval(fetchState, 1000);
+
+            document.getElementById('connectionStatus').className = 'connection-status connected';
+            document.getElementById('connectionText').textContent = '已连接';
+            document.getElementById('connectionStatus').style.animation = 'pulse 2s infinite';
+            reconnectAttempts = 0;
+        }
+
+        function stopPolling() {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+            document.getElementById('connectionStatus').className = 'connection-status disconnected';
+            document.getElementById('connectionStatus').style.animation = 'none';
+            document.getElementById('connectionText').textContent = '已断开';
+        }
+
+        function fetchState() {
+            fetch('/api/state')
+                .then(response => {
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
+                    return response.json();
+                })
+                .then(state => {
+                    updateState(state);
+                })
+                .catch(error => {
+                    reconnectAttempts++;
+                    if (reconnectAttempts <= maxReconnectAttempts) {
+                        if (reconnectAttempts % 5 === 1) {  // 每5次错误才打一条日志，避免刷屏
+                            addLocalLog('WARNING', `无法连接服务器 (尝试 ${reconnectAttempts}/${maxReconnectAttempts})`);
+                        }
+                    } else {
+                        stopPolling();
+                        addLocalLog('ERROR', '连接失败，请检查服务器是否运行');
+                    }
+                });
+        }
+
+        // 启动连接
+        function connect() {
+            startPolling();
+        }
+
+        // 更新界面状态
+        function updateState(state) {
+            isRunning = state.is_running;
+
+            // 更新状态徽章
+            const badge = document.getElementById('statusBadge');
+            const statusText = document.getElementById('statusText');
+            const toggleBtn = document.getElementById('toggleBtn');
+
+            if (isRunning) {
+                badge.className = 'status-badge running';
+                statusText.textContent = '运行中';
+                toggleBtn.textContent = '暂停策略';
+                toggleBtn.className = 'btn btn-danger';
+            } else {
+                badge.className = 'status-badge paused';
+                statusText.textContent = '已暂停';
+                toggleBtn.textContent = '启动策略';
+                toggleBtn.className = 'btn btn-success';
+            }
+
+            // 更新余额
+            document.getElementById('balance').textContent = state.balance.toFixed(2);
+
+            // 更新统计
+            const posCount = Object.keys(state.positions).length;
+            document.getElementById('positionCount').textContent = `${posCount}/5`;
+            document.getElementById('todayTrades').textContent = state.today_trades;
+            document.getElementById('winRate').textContent = `${state.win_rate.toFixed(1)}%`;
+
+            const pnlEl = document.getElementById('todayPnl');
+            pnlEl.textContent = (state.today_pnl >= 0 ? '+' : '') + state.today_pnl.toFixed(2);
+            pnlEl.className = state.today_pnl >= 0 ? 'stat-value positive' : 'stat-value negative';
+
+            // 更新持仓
+            updatePositions(state.positions);
+
+            // 更新冷却
+            updateCooldowns(state.cooldown_symbols, state.global_cooldown_remaining);
+        }
+
+        // 更新持仓显示
+        function updatePositions(positions) {
+            const grid = document.getElementById('positionsGrid');
+            const symbols = Object.keys(positions);
+
+            if (symbols.length === 0) {
+                grid.innerHTML = '<div class="no-positions">暂无持仓</div>';
+                return;
+            }
+
+            grid.innerHTML = symbols.map(sym => {
+                const pos = positions[sym];
+                const sideClass = pos.side.toLowerCase();
+                const pnlPercent = ((pos.current_price - pos.entry_price) / pos.entry_price * 100);
+                const pnlValue = pos.side === 'LONG' ? pnlPercent : -pnlPercent;
+                const pnlClass = pnlValue >= 0 ? 'positive' : 'negative';
+
+                return `
+                    <div class="position-card ${sideClass}">
+                        <div class="position-symbol">${sym.replace('USDT', '')}</div>
+                        <span class="position-side ${sideClass}">${pos.side}</span>
+                        <div class="position-info">
+                            <span>入场</span>
+                            <span>${pos.entry_price.toFixed(4)}</span>
+                        </div>
+                        <div class="position-info">
+                            <span>止损</span>
+                            <span>${pos.stop.toFixed(4)}</span>
+                        </div>
+                        <div class="position-info">
+                            <span>止盈</span>
+                            <span>${pos.take.toFixed(4)}</span>
+                        </div>
+                        <div class="position-pnl ${pnlClass}">
+                            ${pnlValue >= 0 ? '+' : ''}${pnlValue.toFixed(2)}%
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 更新冷却显示
+        function updateCooldowns(symbols, globalRemaining) {
+            const globalEl = document.getElementById('globalCooldown');
+            const cooldownEl = document.getElementById('cooldownTime');
+
+            if (globalRemaining > 0) {
+                globalEl.style.display = 'inline-flex';
+                cooldownEl.textContent = globalRemaining;
+            } else {
+                globalEl.style.display = 'none';
+            }
+
+            const chipsEl = document.getElementById('cooldownChips');
+            if (symbols.length === 0) {
+                chipsEl.innerHTML = '<span style="color: var(--text-secondary);">无</span>';
+            } else {
+                chipsEl.innerHTML = symbols.map(s =>
+                    `<span class="cooldown-chip">${s.replace('USDT', '')}</span>`
+                ).join('');
+            }
+        }
+
+        // 添加日志
+        function addLog(log) {
+            const container = document.getElementById('logContainer');
+            const levelClass = log.message.includes('信号触发') ? 'SIGNAL' : log.level;
+
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `
+                <span class="log-time">${log.time}</span>
+                <span class="log-level ${levelClass}">${log.level}</span>
+                <span class="log-message">${log.message}</span>
+            `;
+
+            container.insertBefore(entry, container.firstChild);
+
+            // 限制日志数量
+            while (container.children.length > 100) {
+                container.removeChild(container.lastChild);
+            }
+        }
+
+        // 本地日志
+        function addLocalLog(level, message) {
+            const now = new Date();
+            const time = now.toTimeString().slice(0, 8);
+            addLog({ time, level, message });
+        }
+
+        // 切换策略状态
+        function toggleStrategy() {
+            const toggleBtn = document.getElementById('toggleBtn');
+            const newState = !isRunning;
+            const action = newState ? 'resume' : 'pause';
+
+            // 乐观更新UI
+            toggleBtn.disabled = true;
+
+            fetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            })
+            .then(response => response.json())
+            .then(data => {
+                // 立即拉取状态
+                fetchState();
+                toggleBtn.disabled = false;
+            })
+            .catch(error => {
+                addLocalLog('ERROR', `命令发送失败: ${error.message}`);
+                toggleBtn.disabled = false;
+            });
+        }
+
+        // 清空日志
+        function clearLogs() {
+            const container = document.getElementById('logContainer');
+            container.innerHTML = '';
+            addLocalLog('INFO', '日志已清空');
+        }
+
+        // 启动连接
+        connect();
+    </script>
+</body>
+</html>

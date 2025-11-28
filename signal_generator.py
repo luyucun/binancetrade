@@ -321,7 +321,8 @@ class SignalGenerator:
         klines_15m: List[Dict],
         current_price: float,
         position_size_usdt: float,
-        volume_ratio_3m: float = None
+        volume_ratio_3m: float = None,
+        min_score_override: int = None
     ) -> Optional[TradingSignal]:
         """
         生成交易信号
@@ -334,6 +335,7 @@ class SignalGenerator:
             current_price: 当前价格
             position_size_usdt: 仓位大小(USDT)
             volume_ratio_3m: 3m真实volume ratio（可选）
+            min_score_override: 动态评分门槛（可选，用于市场状态调整）
 
         Returns:
             交易信号对象，如果信号不满足条件则返回None
@@ -382,8 +384,8 @@ class SignalGenerator:
                 volume_ratio_3m
             )
 
-            # 7. 检查最低评分
-            min_score = self.scorer.thresholds['minimum_score']
+            # 7. 检查最低评分（支持动态门槛）
+            min_score = min_score_override if min_score_override is not None else self.scorer.thresholds['minimum_score']
             if signal_score.total_score < min_score:
                 logger.debug(f"{symbol}: 评分不足({signal_score.total_score}/{min_score})")
                 return None

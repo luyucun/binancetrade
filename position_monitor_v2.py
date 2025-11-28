@@ -100,21 +100,6 @@ class PositionMonitor:
                 symbols_to_close.append(symbol)
                 logger.warning(f"{symbol}: 触发平仓事件")
 
-            # 检查持仓时间限制
-            if self._check_max_hold_time(position):
-                symbols_to_close.append(symbol)
-                events.append(MonitoringEvent(
-                    timestamp=datetime.now(),
-                    event_type="TIME_STOP",
-                    symbol=symbol,
-                    exit_price=current_price,
-                    exit_quantity=position.remaining_quantity,
-                    profit_loss_usdt=position.floating_pnl_usdt,
-                    profit_loss_pct=position.floating_pnl_pct,
-                    details=f"超过最大持仓时间(90分钟)"
-                ))
-                logger.warning(f"{symbol}: 超过最大持仓时间，强制平仓")
-
         return symbols_to_close, events
 
     # ==================== 持仓时间检查 ====================

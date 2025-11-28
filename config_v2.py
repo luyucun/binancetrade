@@ -6,12 +6,13 @@
 
 # ==================== 1. 选币策略配置 ====================
 SELECTION_CONFIG = {
-    'min_24h_volume': 5000000,      # 最小24小时交易量500万USDT
+    # 加严选币以过滤微价/低流动性代币
+    'min_24h_volume': 15000000,     # 最小24小时交易量1500万USDT
     'max_24h_change': 15.0,         # 最大24小时涨跌幅±15%
-    'min_price': 0.001,             # 最小价格过滤
+    'min_price': 0.01,              # 最小价格过滤
     'exclude_patterns': ['1000', 'BULL', 'BEAR', 'UP', 'DOWN'],  # 排除杠杆代币
-    'top_n_by_volume': 60,          # 交易量前60的币种（持续监控）
-    'volume_ratio_threshold': 1.2,  # 当前成交量/平均成交量 > 1.2
+    'top_n_by_volume': 40,          # 交易量前40的币种（持续监控）
+    'volume_ratio_threshold': 1.5,  # 当前成交量/平均成交量 > 1.5
 }
 
 # ==================== 2. 多时间框架配置 ====================
@@ -92,42 +93,58 @@ ENTRY_RULES = {
     }
 }
 
-# ==================== 5. 风险管理规则 ====================
+# ==================== 5. 风险管理规则 (优化版 - 提升盈亏比) ====================
 RISK_MANAGEMENT = {
     # 仓位管理
     'position_sizing': {
-        'base_amount': 12,          # 基础仓位12 USDT (确保信心度50%时仍≥5)
+        'base_amount': 25,          # 固定仓位25 USDT
         'leverage': 1,              # 1倍杠杆
         'max_position_ratio': 0.1,  # 单币种最大仓位10%
-        'max_total_exposure': 0.3,  # 总风险暴露30%
+        'max_total_exposure': 0.5,  # 总风险暴露50%（从30%提升，允许更多并发）
         'min_notional': 5.5,        # 最小名义价值5.5 USDT (留余量)
+
+        # 新增: 动态仓位倍率（基于评分）
+        'score_multipliers': {
+            10: 1.0,    # 10分信号: 基础倍数
+            9: 1.0,     # 9分信号: 基础倍数
+            8: 1.0,     # 8分信号: 基础倍数
+            7: 0.7,     # 7分信号: 7 USDT (降低)
+        },
     },
 
-    # 动态止损
+    # 动态止损 (优化: 收紧止损)
     'stop_loss': {
         'initial_atr_multiplier': 1.2,    # 初始止损1.2×ATR
         'volatility_adjustment': True,    # 根据波动率调整
-        'min_stop_pct': 0.4,              # 最小止损0.4%（百分数表示，实际0.004）
-        'max_stop_pct': 3.0,              # 最大止损3.0%（百分数表示，实际0.03）
-        'breakeven_trigger': 0.5,         # 盈利0.5×ATR时保本
+        'min_stop_pct': 1.0,              # 最小止损1.0%
+        'max_stop_pct': 2.5,              # 最大止损2.5%
+        'breakeven_trigger': 1.5,         # 盈利1.5×ATR时保本
+
+        # 新增: 时间止损配置
+        'time_stop': {
+            'enabled': True,
+            'max_hold_minutes': 60,       # 最大持仓60分钟
+            'min_profit_pct': 0.002,      # 60分钟后未盈利0.2%则平仓
+        },
     },
 
-    # 分阶段止盈
+    # 分阶段止盈 (优化: 扩大盈亏比 目标1.5:1以上)
     'take_profit': {
         'stage1': {
-            'trigger': 0.8,         # 0.8×ATR触发
-            'close_pct': 0.4,       # 平仓40%
+            'trigger': 1.2,         # 1.2×ATR触发（从0.8提升）
+            'close_pct': 0.3,       # 平仓30%（从40%降低，让利润跑）
             'move_stop_to_breakeven': True
         },
         'stage2': {
-            'trigger': 1.2,         # 1.2×ATR触发
+            'trigger': 2.0,         # 2.0×ATR触发（从1.2提升）
             'close_pct': 0.3,       # 平仓30%
             'move_stop_to_breakeven_plus': True
         },
         'stage3': {
-            'trigger': 1.8,         # 1.8×ATR触发
+            'trigger': 3.0,         # 3.0×ATR触发（从1.8提升）
+            'close_pct': 0.2,       # 先锁20%仓位
             'trailing_stop': True,  # 启用追踪止损
-            'trailing_atr_multiplier': 1.0  # 1.0×ATR追踪
+            'trailing_atr_multiplier': 1.2  # 1.2×ATR追踪（从1.0放宽）
         }
     }
 }
@@ -156,7 +173,7 @@ MARKET_FILTERS = {
     }
 }
 
-# ==================== 7. 信号评分系统 ====================
+# ==================== 7. 信号评分系统 (优化版 - 提高门槛) ====================
 SCORING_SYSTEM = {
     'trend_strength': {
         'multi_tf_alignment': 2,    # 多时间框架对齐 +2分
@@ -177,25 +194,39 @@ SCORING_SYSTEM = {
     },
 
     'thresholds': {
-        'minimum_score': 7,         # 最低得分7分才入场 (从5提高到7)
-        'high_confidence': 8,       # 高信心得分8分
-        'maximum_position_size': 12 # 最大仓位得分12分
+        'minimum_score': 9,         # 默认最低9分入场
+        'high_confidence': 9,       # 高信心度9分
+        'maximum_position_size': 10 # 满仓位10分
+
+        # 注意: 实际门槛会根据市场状态动态调整
+        # 高波动时: minimum_score = 9
+        # 低波动时: minimum_score = 8
+        # 正常时: minimum_score = 9
     }
 }
 
-# ==================== 8. 冷却和轮动机制 ====================
+# ==================== 8. 冷却和轮动机制 (优化版) ====================
 ROTATION_SYSTEM = {
     'cooldown_periods': {
-        'after_stop_loss': 30,      # 止损后冷却30分钟
+        'after_stop_loss': 45,      # 止损后冷却45分钟
         'after_take_profit': 10,    # 止盈后冷却10分钟
         'after_multiple_losses': 60 # 多次亏损后冷却60分钟
     },
 
     'symbol_rotation': {
-        'max_concurrent_positions': 3,  # 最大同时持仓3个
+        'max_concurrent_positions': 5,  # 最大同时持仓5个（从3提升）
         'sector_diversification': True, # 板块分散
         'correlation_threshold': 0.7,   # 相关性阈值0.7
         'performance_review_interval': 24 # 每24小时评估表现
+    },
+
+    # 新增: 动态黑名单配置
+    'dynamic_blacklist': {
+        'enabled': True,
+        'consecutive_losses_threshold': 2,  # 连续亏损2次进入黑名单
+        'total_loss_threshold': -0.3,       # 总亏损超过0.3 USDT进入黑名单
+        'blacklist_duration_hours': 24,     # 黑名单持续24小时
+        'short_blacklist_duration_hours': 12, # 短黑名单12小时
     },
 
     'dynamic_adjustment': {
@@ -205,7 +236,38 @@ ROTATION_SYSTEM = {
     }
 }
 
-# ==================== 9. 执行和监控 ====================
+# ==================== 9. 市场状态配置 (新增) ====================
+MARKET_REGIME_CONFIG = {
+    # 波动率阈值（基于BTC ATR/Price比率）
+    'volatility_thresholds': {
+        'high_vol': 0.015,    # ATR/Price > 1.5% 为高波动
+        'low_vol': 0.005,     # ATR/Price < 0.5% 为低波动
+    },
+
+    # 不同市场状态下的参数调整
+    'regime_params': {
+        'HIGH_VOL': {
+            'min_score': 9,           # 高波动时提高门槛到9分
+            'stop_loss_mult': 1.3,    # 放宽止损30%
+            'max_positions': 2,       # 减少持仓到2个
+            'position_size_mult': 0.5, # 仓位缩减50%
+        },
+        'LOW_VOL': {
+            'min_score': 8,           # 低波动时降低门槛到8分
+            'stop_loss_mult': 0.8,    # 收紧止损20%
+            'max_positions': 5,       # 允许更多持仓
+            'position_size_mult': 1.0, # 正常仓位
+        },
+        'NORMAL': {
+            'min_score': 9,           # 正常状态分门槛
+            'stop_loss_mult': 1.0,    # 正常止损
+            'max_positions': 5,       # 正常持仓数
+            'position_size_mult': 1.0, # 正常仓位
+        }
+    }
+}
+
+# ==================== 10. 执行和监控 ====================
 EXECUTION_SYSTEM = {
     'order_placement': {
         'order_type': 'MARKET',         # 市价单
