@@ -594,6 +594,62 @@ class BinanceClientV2:
             logger.error(f"设置止盈异常 {symbol}: {e}")
             return None
 
+    def get_position_entry_time(self, symbol: str, side: str) -> Optional[float]:
+        """
+        获取持仓的开仓时间（通过查询最近成交记录推算）
+
+        Args:
+            symbol: 交易对
+            side: 'LONG' 或 'SHORT'
+
+        Returns:
+            开仓时间戳(秒)，失败返回 None
+        """
+        try:
+            # 获取最近的成交记录
+            trades = self.client.futures_account_trades(symbol=symbol, limit=100)
+            if not trades:
+                return None
+
+            # 按时间正序排列（从旧到新）
+            trades.sort(key=lambda x: x['time'], reverse=False)
+
+            # 确定开仓方向对应的买卖方向
+            # LONG 持仓：买入开仓，卖出平仓
+            # SHORT 持仓：卖出开仓，买入平仓
+            open_side = 'BUY' if side == 'LONG' else 'SELL'
+
+            # 追踪净持仓量，找到持仓从0变为非0的时间点
+            net_qty = 0.0
+            entry_time = None
+
+            for trade in trades:
+                trade_side = trade.get('side', '')
+                position_side = trade.get('positionSide', 'BOTH')
+                qty = float(trade.get('qty', 0))
+
+                # 匹配持仓方向
+                if position_side == side or position_side == 'BOTH':
+                    if trade_side == open_side:
+                        # 开仓交易
+                        if net_qty == 0:
+                            # 从零仓位开始建仓，记录开仓时间
+                            entry_time = trade['time'] / 1000
+                        net_qty += qty
+                    else:
+                        # 平仓交易
+                        net_qty -= qty
+                        if net_qty <= 0:
+                            # 仓位已清零，重置开仓时间
+                            net_qty = 0
+                            entry_time = None
+
+            return entry_time
+
+        except Exception as e:
+            logger.warning(f"获取开仓时间失败 {symbol}: {e}")
+            return None
+
     # ==================== BTC数据 ====================
     def get_btc_indicators(self, interval: str = '15m', limit: int = 100) -> Optional[Tuple]:
         """获取BTC的K线数据用于分析（使用合约K线）"""

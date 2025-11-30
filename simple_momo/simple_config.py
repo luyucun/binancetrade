@@ -5,7 +5,7 @@ from pathlib import Path
 ENTRY_USDT = 20.0          # 固定开仓名义
 ATR_PERIOD = 14
 CHECK_INTERVAL = 10        # 主循环间隔(秒)
-MIN_TREND_BARS = 9         # 检查K线根数
+MIN_TREND_BARS = 5         # 检查K线根数（5根中4根同向）
 MAX_POSITIONS = 5          # 最多持仓数
 LEVERAGE = 1
 HEDGE_MODE = True          # 使用双向持仓
