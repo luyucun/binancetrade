@@ -33,7 +33,7 @@ class Position:
     stop: float
     take: float
     atr: float = 0.0   # 开仓时的ATR值，用于移动止损判断
-    entry_time: float = 0.0  # 开仓时间戳，用于僵尸单清理
+    entry_time: float = 0.0  # 开仓时间戳
     partial_closed: bool = False  # 是否已平仓70% (第一档止盈)
     full_take_triggered: bool = False  # 是否触发全部平仓 (第二档止盈)
     breakeven_set: bool = False  # 是否已设置保本止损
@@ -44,14 +44,16 @@ class Position:
 
 class SimpleMomoEngine:
     """
-    极简趋势跟随 (解锁版 V4):
+    极简趋势跟随 (解锁版 V4 - 智能风控版):
     1. 策略: 15m定趋势 + 1m找爆发 (5根中4根同向)
-    2. 过滤: RSI(14) 必须处于强势区 (45 < RSI < 75) -- [已修正]
+    2. 过滤: RSI(14) 必须处于强势区 (45 < RSI < 75)
     3. 风控:
-       - 僵尸单清理: 持仓>15分钟且无明显盈利(>0.3ATR) -> 强制离场
-       - 止损: 1.2 ATR
+       - 超时清理: 持仓 > 1.5小时 (5400s) 强制平仓
+       - 阶梯止损: 
+         * 浮盈 > 0.8 ATR -> 保本
+         * 浮盈 > 1.5 ATR -> 锁定0.5 ATR利润
+       - 止损: 2.5 ATR
        - 止盈: 2.0 ATR(70%) + 2.5 ATR(30%)
-       - 全局冷却: 5分钟
     """
 
     def __init__(self):
@@ -76,8 +78,8 @@ class SimpleMomoEngine:
         self._sync_positions_from_exchange()
 
         logger.info(
-            f"SimpleMomo V4 (解锁版) 启动 | 止损=1.2ATR | RSI区间=(45-75) | "
-            f"僵尸清理=15min | 全局冷却=5min"
+            f"SimpleMomo V4 (智能风控版) 启动 | 止损=2.5ATR | 超时清理=1.5h | "
+            f"移动止损=开启"
         )
 
     def _setup_exchange(self):
@@ -128,17 +130,18 @@ class SimpleMomoEngine:
                 # 获取真实开仓时间
                 entry_time = self.client.get_position_entry_time(symbol, side)
                 if entry_time is None:
-                    # 获取失败时使用当前时间，但记录警告
                     entry_time = time.time()
                     logger.warning(f"[同步] {symbol}: 无法获取开仓时间，使用当前时间")
 
-                # 估算止损止盈（基于入场价而非当前价）
+                # 估算止损止盈（基于入场价）
                 entry_price = pos['entry_price']
+                
+                # 同步时止损宽带维持 2.5 ATR
                 if atr_val > 0:
-                    stop = entry_price - 1.2 * atr_val if side == "LONG" else entry_price + 1.2 * atr_val
+                    stop = entry_price - 2.5 * atr_val if side == "LONG" else entry_price + 2.5 * atr_val
                     take = entry_price + 2.0 * atr_val if side == "LONG" else entry_price - 2.0 * atr_val
                 else:
-                    stop = entry_price * 0.99 if side == "LONG" else entry_price * 1.01
+                    stop = entry_price * 0.95 if side == "LONG" else entry_price * 1.05
                     take = entry_price * 1.02 if side == "LONG" else entry_price * 0.98
 
                 self.positions[symbol] = Position(
@@ -232,10 +235,7 @@ class SimpleMomoEngine:
         seg = klines[-(n + 1):-1]
         up_count = sum(1 for k in seg if k["close"] > k["open"])
         down_count = n - up_count
-
-        # 动态阈值：如果n=5，则需要4根；如果n=9，需要7根
         threshold = 4 if n <= 6 else 7
-        
         if up_count >= threshold: return "UP"
         if down_count >= threshold: return "DOWN"
         return ""
@@ -265,9 +265,6 @@ class SimpleMomoEngine:
             return ""
 
     def check_trend_filter(self, symbol: str, side: str) -> tuple:
-        """
-        [放宽版] 只记录警告，不再强制拦截
-        """
         btc_trend = self.get_btc_trend()
         if btc_trend:
             if side == "SHORT" and btc_trend == "UP":
@@ -292,16 +289,12 @@ class SimpleMomoEngine:
         self.direction_block_until[symbol] = time.time() + 4 * 3600
         logger.info(f"[熔断] {symbol} {side}方向亏损，封锁该方向4小时")
 
-    # ==================== RSI 趋势强度 (已修复) ====================
+    # ==================== RSI 趋势强度 ====================
     def check_rsi_reversal(self, symbol: str, klines, side: str) -> tuple:
-        """
-        [修复版] 只要RSI处于强势区间(45-75)即允许开仓
-        """
         current_rsi = self.calculate_rsi(klines)
         self.rsi_history[symbol] = current_rsi
 
         if side == "LONG":
-            # 只要不是太弱(<45) 且没有严重超买(>75)
             if current_rsi < 45:
                 return False, current_rsi, f"RSI({current_rsi:.1f})过弱(<45)，动能不足"
             if current_rsi > 75:
@@ -309,7 +302,6 @@ class SimpleMomoEngine:
             return True, current_rsi, ""
 
         if side == "SHORT":
-            # 只要不是太强(>55) 且没有严重超卖(<25)
             if current_rsi > 55:
                 return False, current_rsi, f"RSI({current_rsi:.1f})过强(>55)，动能不足"
             if current_rsi < 25:
@@ -378,20 +370,15 @@ class SimpleMomoEngine:
 
             side = "LONG" if dir_1m == "UP" else "SHORT"
 
-            # 3. 过滤器 (只做软性检查或必要检查)
-            # 大势 (只记录不拦截)
+            # 3. 过滤器
             trend_ok, trend_reason = self.check_trend_filter(sym, side)
             if not trend_ok: logger.info(f"大势提示: {trend_reason}")
 
-            # 熔断 (必须拦截)
             block_ok, block_reason = self.check_direction_block(sym, side)
             if not block_ok: continue
 
-            # RSI (区间过滤)
             rsi_ok, rsi_val, rsi_reason = self.check_rsi_reversal(sym, kl, side)
-            if not rsi_ok: 
-                # logger.debug(f"{sym} RSI过滤: {rsi_reason}") 
-                continue
+            if not rsi_ok: continue
 
             atr_val = self.atr(kl_15m)
             if atr_val <= 0: continue
@@ -409,7 +396,10 @@ class SimpleMomoEngine:
 
     async def open_position(self, symbol: str, side: str, price: float, atr: float):
         qty = ENTRY_USDT / price
-        stop = price - 1.2 * atr if side == "LONG" else price + 1.2 * atr
+        
+        # 止损保持 2.5 ATR
+        stop = price - 2.5 * atr if side == "LONG" else price + 2.5 * atr
+        
         take_1 = price + 2.0 * atr if side == "LONG" else price - 2.0 * atr
         take_2 = price + 2.5 * atr if side == "LONG" else price - 2.5 * atr
         pos_side = "LONG" if side == "LONG" else "SHORT"
@@ -431,17 +421,13 @@ class SimpleMomoEngine:
             actual_qty = order.get('filled', qty)
             if actual_qty == 0: actual_qty = order.get('quantity', qty)
 
-            # 先调整总数量精度，再计算分批数量，避免精度累积误差导致残留仓位
             adjusted_total = self.client.adjust_quantity(symbol, actual_qty)
             if not adjusted_total:
                 logger.error(f"{symbol}: 数量精度调整失败")
                 return
 
-            # 70% 先调整精度
             qty_take_1_raw = adjusted_total * 0.7
             qty_take_1 = self.client.adjust_quantity(symbol, qty_take_1_raw) or qty_take_1_raw
-
-            # 30% = 总量 - 70%，确保无残留
             qty_take_2 = adjusted_total - qty_take_1
 
             stop_order_id = self.client.set_stop_loss(
@@ -463,7 +449,7 @@ class SimpleMomoEngine:
             )
 
             log_msg = (f"[入场] {symbol} | 方向:{side} | 价格:{price:.4f} | "
-                       f"止损:{stop:.4f}(1.2ATR) | 止盈1:{take_1:.4f}")
+                       f"止损:{stop:.4f}(2.5ATR) | 止盈1:{take_1:.4f}")
             self.trade_logger.info(log_msg)
             logger.info(log_msg)
 
@@ -487,6 +473,8 @@ class SimpleMomoEngine:
         to_remove = []
         for sym, pos in list(self.positions.items()):
             price = prices.get(sym, 0)
+            
+            # 1. 检查仓位是否已在交易所消失（止盈止损触发）
             if sym not in actual_positions:
                 reason = "挂单触发"
                 if price:
@@ -501,37 +489,46 @@ class SimpleMomoEngine:
 
             if not price: continue
 
-            # 僵尸单清理 (15min)
+            # 计算持仓时间和浮盈ATR
             holding_time = time.time() - pos.entry_time
-            if holding_time > 900 and pos.atr > 0:
+            if pos.atr > 0:
                 profit_atr = (price - pos.entry_price) / pos.atr if pos.side == "LONG" else (pos.entry_price - price) / pos.atr
-                if profit_atr < 0.3:
-                    reason = f"僵尸单清理(利润{profit_atr:.2f}ATR<0.3)"
-                    logger.info(f"[僵尸单] {sym}: {reason}")
-                    self.cooldown_until[sym] = time.time() + 1800
-                    await self.close_position_market(sym, pos, price, reason)
-                    to_remove.append(sym)
-                    continue
+            else:
+                profit_atr = 0
 
-            # 动态保本
-            if pos.atr > 0 and not pos.breakeven_set:
-                profit_atr = (price - pos.entry_price) / pos.atr if pos.side == "LONG" else (pos.entry_price - price) / pos.atr
-                if profit_atr >= 0.8:
-                    breakeven_price = pos.entry_price * 1.001 if pos.side == "LONG" else pos.entry_price * 0.999
-                    try:
-                        if pos.stop_order_id: self.client.cancel_order(sym, pos.stop_order_id)
-                        close_side = "SELL" if pos.side == "LONG" else "BUY"
-                        pos_side_str = "LONG" if pos.side == "LONG" else "SHORT"
-                        new_stop_id = self.client.set_stop_loss(
-                            symbol=sym, quantity=pos.qty, stop_price=breakeven_price, side=close_side, position_side=pos_side_str
-                        )
-                        if new_stop_id:
-                            pos.stop_order_id = new_stop_id
-                            pos.stop = breakeven_price
-                            pos.breakeven_set = True
-                            logger.info(f"[保本] {sym}: 浮盈{profit_atr:.2f}ATR -> 止损移至保本价")
-                    except Exception as e:
-                        logger.error(f"{sym}: 设置保本止损失败 {e}")
+            # ==================================================
+            # 1. 超时强制清理 (1.5小时 = 5400秒)
+            # ==================================================
+            if holding_time > 5400:  
+                reason = f"超时清理(持仓>1.5h)"
+                logger.info(f"[超时] {sym}: 持仓过久，强制释放仓位 | 当前盈亏:{profit_atr:.2f}ATR")
+                self.cooldown_until[sym] = time.time() + 1800 # 冷却30分钟
+                await self.close_position_market(sym, pos, price, reason)
+                to_remove.append(sym)
+                continue
+
+            # ==================================================
+            # 2. 阶梯移动止损
+            # ==================================================
+            if pos.atr > 0:
+                # 阶段 1: 基础保本 (浮盈 > 0.8 ATR -> 移至 入场价)
+                if profit_atr >= 0.8 and not pos.breakeven_set:
+                    new_stop = pos.entry_price * 1.001 if pos.side == "LONG" else pos.entry_price * 0.999
+                    if self._update_stop_loss(sym, pos, new_stop):
+                        pos.breakeven_set = True
+                        logger.info(f"[移动止损] {sym}: 浮盈{profit_atr:.2f}ATR -> 止损移至保本")
+
+                # 阶段 2: 利润锁定 (浮盈 > 1.5 ATR -> 移至 入场价 + 0.5 ATR)
+                # 只有当止损还没移动到更优位置时才执行
+                elif profit_atr >= 1.5:
+                    lock_profit_price = pos.entry_price + (0.5 * pos.atr) if pos.side == "LONG" else pos.entry_price - (0.5 * pos.atr)
+                    
+                    # 检查新止损是否比旧止损更优
+                    is_better = lock_profit_price > pos.stop if pos.side == "LONG" else lock_profit_price < pos.stop
+                    
+                    if is_better:
+                        if self._update_stop_loss(sym, pos, lock_profit_price):
+                            logger.info(f"[移动止损] {sym}: 浮盈{profit_atr:.2f}ATR -> 锁定0.5ATR利润")
 
             # 兜底
             hit_stop = price <= pos.stop if pos.side == "LONG" else price >= pos.stop
@@ -553,6 +550,31 @@ class SimpleMomoEngine:
         for sym in to_remove:
             self.positions.pop(sym, None)
 
+    def _update_stop_loss(self, symbol: str, pos: Position, new_price: float) -> bool:
+        """辅助函数：更新止损单"""
+        try:
+            if pos.stop_order_id:
+                try:
+                    self.client.cancel_order(symbol, pos.stop_order_id)
+                except Exception:
+                    pass
+            
+            close_side = "SELL" if pos.side == "LONG" else "BUY"
+            pos_side_str = "LONG" if pos.side == "LONG" else "SHORT"
+            
+            new_id = self.client.set_stop_loss(
+                symbol=symbol, quantity=pos.qty, stop_price=new_price, side=close_side, position_side=pos_side_str
+            )
+            
+            if new_id:
+                pos.stop_order_id = new_id
+                pos.stop = new_price
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"{symbol}: 更新止损失败 {e}")
+            return False
+
     async def close_position_market(self, symbol: str, pos: Position, price: float, reason: str):
         side = "SELL" if pos.side == "LONG" else "BUY"
         pos_side = "LONG" if pos.side == "LONG" else "SHORT"
@@ -562,7 +584,7 @@ class SimpleMomoEngine:
                 try:
                     self.client.cancel_order(symbol, pos.stop_order_id)
                 except Exception:
-                    pass  # 订单可能已触发
+                    pass
             if pos.take_order_id:
                 try:
                     self.client.cancel_order(symbol, pos.take_order_id)
@@ -574,7 +596,7 @@ class SimpleMomoEngine:
                 except Exception:
                     pass
 
-            # 市价平仓 - 在 Hedge Mode 下不能用 reduce_only，需要指定 position_side
+            # 市价平仓
             self.client.place_market_order(
                 symbol=symbol, side=side, quantity=pos.qty, position_side=pos_side, reduce_only=False,
             )
